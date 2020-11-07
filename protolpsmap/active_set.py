@@ -3,7 +3,7 @@
 # author: vlad niculae <vlad.niculae@uva.nl>
 # license: mit
 
-from collections import defaultdict
+from collections import OrderedDict
 import numpy as np
 
 
@@ -17,31 +17,29 @@ class ActiveSet(object):
         y, score = self.polytope.map_oracle(-eta_u, -eta_v)
         return y, -score
 
-    def _reconstruct_guess(self, active_set, alpha):
+    def _reconstruct_guess(self, active_set):
         """Compute the current guess from the weights over the vertices:
 
             [u, v] = sum_{y in active_set} alpha[y] * [m_y, n_y]
 
         """
-        u, v = self.polytope.vertex(active_set[0])
-        u *= alpha[0]
-        v *= alpha[0]
+        u, v = [], []
 
-        for i in range(1, len(active_set)):
-            m_y, n_y = self.polytope.vertex(active_set[i])
-            u += alpha[i] * m_y
-            v += alpha[i] * n_y
+        for y, alpha_y in active_set.items():
+            m_y, n_y = self.polytope.vertex(y)
+            u.append(alpha_y * m_y)
+            v.append(alpha_y * n_y)
 
-        return u, v
+        return sum(u), sum(v)
 
-    def _find_step(self, p, p_next):
+    def _find_step(self, alpha, alpha_next):
 
         y = None
         gamma = 1
 
-        for yy in range(len(p)):
-            if p[yy] > p_next[yy]:
-                gamma_cand = p[yy] / (p[yy] - p_next[yy])
+        for i, yy in enumerate(alpha.keys()):
+            if alpha[yy] > alpha_next[i]:
+                gamma_cand = alpha[yy] / (alpha[yy] - alpha_next[i])
                 if gamma_cand < gamma:
                     y = yy
                     gamma = gamma_cand
@@ -52,11 +50,12 @@ class ActiveSet(object):
         eta_u = np.asarray(eta_u, dtype=np.float)
         eta_v = np.asarray(eta_v, dtype=np.float)
 
-        y0, score_y0 = self._pick_init(eta_u, eta_v)
+        alpha = OrderedDict()
+        scores = OrderedDict()
 
-        active_set = [y0]
-        scores = [1, score_y0]
-        p = np.zeros(1)
+        y0, score_y0 = self._pick_init(eta_u, eta_v)
+        alpha[y0] = 1
+        scores[y0] = score_y0
 
         utu = self.polytope.vertex_dot(y0, y0)
         MtM = np.array([
@@ -64,58 +63,56 @@ class ActiveSet(object):
             [1, utu]], dtype=np.double)
 
         for it in range(self.max_iter):
-            print("solving", active_set, scores)
+            print("solving", alpha)
             print(MtM)
             print()
-            res = np.linalg.solve(MtM,
-                                  np.array(scores, dtype=np.double))
-            # res = np.linalg.lstsq(MtM,
-                                  # np.array(scores, dtype=np.double))
-            # res, _, _, _ = res
+            b = np.array([1] + list(scores.values()), dtype=np.double)
+            res = np.linalg.solve(MtM, b)
 
-            tau, p_next = res[0], res[1:]
-            print("iter", it, tau, p_next)
+            tau, alpha_next = res[0], res[1:]
+            print("iter", it, tau, alpha_next)
 
-            y_min, gamma = self._find_step(p, p_next)
+            y_min, gamma = self._find_step(alpha, alpha_next)
 
             if gamma < 1:
-                p *= (1 - gamma)
-                p += gamma * p_next
+
+                for i, yy in enumerate(alpha.keys()):
+                    alpha[yy] *= (1 - gamma)
+                    alpha[yy] += gamma * alpha_next[i]
 
                 # drop the minimizer
                 print(".. dropping", y_min)
-                mask = np.ones(1 + len(active_set)).astype(np.bool)
+                mask = np.ones(1 + len(alpha)).astype(np.bool)
                 mask[1 + y_min] = 0
-                print(mask)
-
-                del active_set[y_min]
-                del scores[1 + y_min]
-                p = p[mask[1:]]
+                del alpha[y_min]
+                del scores[y_min]
                 MtM = MtM[mask][:, mask]
 
             else:
                 # get new point
-                p = p_next
-                u_curr, v_curr = self._reconstruct_guess(active_set, p)
+                for i, yy in enumerate(alpha.keys()):
+                    alpha[yy] = alpha_next[i]
+
+                u_curr, v_curr = self._reconstruct_guess(alpha)
                 y_next, score_y_next = self.polytope.map_oracle(eta_u - u_curr,
                                                                 eta_v - v_curr)
                 print(".. adding", y_next)
 
                 gap = tau - score_y_next
-                if gap >= -1e-9:
+                if gap >= -1e-9 or y_next in alpha:
                     print("Converged.", gap)
                     break
 
                 Mu = np.array([1.] + [self.polytope.vertex_dot(y, y_next)
-                               for y in active_set]).reshape(-1, 1)
+                                      for y in alpha.keys()]).reshape(-1, 1)
                 utu = self.polytope.vertex_dot(y_next, y_next)
-                active_set.append(y_next)
+
+                alpha[y_next] = 0
+                scores[y_next] = score_y_next
                 MtM = np.block([[MtM, Mu],
                                 [Mu.T, utu]])
-                scores.append(score_y_next)
-                p = np.concatenate([p, np.zeros(1)])
 
-        return self._reconstruct_guess(active_set, p)
+        return self._reconstruct_guess(alpha)
 
 
 def main():
