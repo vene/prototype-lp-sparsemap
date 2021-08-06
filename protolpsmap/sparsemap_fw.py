@@ -195,7 +195,7 @@ class SparseMAPFW(object):
 
             # print("Gap", gap)
             if self.tol is not None and gap < self.tol:  # check convergence
-                print("Converged")
+                # print("Converged")
                 break
 
             # compute step size by line search

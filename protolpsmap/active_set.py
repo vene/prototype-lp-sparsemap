@@ -8,7 +8,7 @@ import numpy as np
 
 
 class ActiveSet(object):
-    def __init__(self, polytope,  max_iter=100):
+    def __init__(self, polytope, max_iter=100):
         self.polytope = polytope
         self.max_iter = max_iter
 
